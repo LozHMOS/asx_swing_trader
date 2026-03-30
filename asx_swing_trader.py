@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import io
+import time
 
 st.title("ASX & International Swing Trader – Yeppoon Edition")
 st.markdown("CBA/SMSF: keep International Mode off. NAB personal: turn International Mode on for global exposure. Commodities Mode adds oil/gold ETFs for extra boost. Not financial advice.")
@@ -57,40 +58,65 @@ if portfolio_file is not None:
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes to reduce Yahoo requests
+def get_history(ticker_list):
+    try:
+        data = yf.download(ticker_list, period="3mo", progress=False, threads=True)
+        return data
+    except:
+        return None
+
 if st.button("Run Weekly Scan & Portfolio Review"):
     st.write(f"Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST")
     data = []
+    # Use batch download where possible to avoid rate limits
+    hist_data = get_history(watchlist)
+    
     for ticker in watchlist:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="3mo")
-        if len(hist) < 20:
-            continue
-        current_price = hist["Close"].iloc[-1]
-        delta = hist["Close"].diff()
-        gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-        loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        rsi_val = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
-        momentum = (current_price / hist["Close"].iloc[-momentum_period]) - 1 if len(hist) > momentum_period else 0
-        if rsi_val < rsi_threshold and momentum > 0:
-            signal = "BUY"
-        elif rsi_val > 70:
-            signal = "SELL"
-        else:
-            signal = "HOLD"
-        data.append({
-            "Ticker": ticker,
-            "Current Price": round(current_price, 3),
-            "RSI": round(rsi_val, 1),
-            "Momentum %": round(momentum * 100, 1),
-            "Signal": signal,
-            "Quantity": 0,
-            "Avg Buy Price": 0.0,
-            "Holding Value": 0.0,
-            "Unrealised Profit %": 0.0,
-            "Advice": signal
-        })
+        try:
+            if hist_data is not None and ticker in hist_data.columns.get_level_values(1):
+                close_series = hist_data['Close'][ticker]
+            else:
+                # Fallback for individual ticker
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period="3mo")
+                if len(hist) < 20:
+                    continue
+                close_series = hist["Close"]
+            
+            current_price = close_series.iloc[-1]
+            delta = close_series.diff()
+            gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+            loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            rsi_val = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
+            momentum = (current_price / close_series.iloc[-momentum_period]) - 1 if len(close_series) > momentum_period else 0
+            
+            if rsi_val < rsi_threshold and momentum > 0:
+                signal = "BUY"
+            elif rsi_val > 70:
+                signal = "SELL"
+            else:
+                signal = "HOLD"
+            
+            data.append({
+                "Ticker": ticker,
+                "Current Price": round(current_price, 3),
+                "RSI": round(rsi_val, 1),
+                "Momentum %": round(momentum * 100, 1),
+                "Signal": signal,
+                "Quantity": 0,
+                "Avg Buy Price": 0.0,
+                "Holding Value": 0.0,
+                "Unrealised Profit %": 0.0,
+                "Advice": signal
+            })
+            time.sleep(0.2)  # Small delay to stay under Yahoo rate limits
+        except:
+            continue  # Skip any single ticker that causes a temporary rate limit
+    
+    # Portfolio merge and profit calculations (unchanged)
     if not portfolio_df.empty:
         for _, row in portfolio_df.iterrows():
             ticker = row["Ticker"]
@@ -102,6 +128,7 @@ if st.button("Run Weekly Scan & Portfolio Review"):
                 existing["Avg Buy Price"] = avg_price
             else:
                 data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": qty, "Avg Buy Price": avg_price, "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD"})
+    
     for item in data:
         if item["Quantity"] > 0:
             try:
@@ -118,6 +145,7 @@ if st.button("Run Weekly Scan & Portfolio Review"):
                 item["Advice"] = "BUY to add"
             else:
                 item["Advice"] = "HOLD"
+    
     if data:
         df = pd.DataFrame(data)
         def highlight(row):
