@@ -61,7 +61,7 @@ if st.button("Run Weekly Scan & Portfolio Review"):
     st.write(f"Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST")
     data = []
     for ticker in watchlist:
-        stock = yfinance.Ticker(ticker)
+        stock = yf.Ticker(ticker)
         hist = stock.history(period="3mo")
         if len(hist) < 20:
             continue
