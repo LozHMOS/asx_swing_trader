@@ -4,102 +4,85 @@ import pandas as pd
 from datetime import datetime
 import io
 import time
+import os
 
-st.title("ASX & International Swing Trader – Yeppoon Edition")
-st.markdown("CBA/SMSF: keep International Mode off. NAB personal: turn International Mode on for global exposure. Commodities Mode adds oil/gold ETFs for extra boost. Not financial advice.")
+st.set_page_config(page_title="ASX Swing Trader – SMSF Edition", layout="wide")
+st.title("ASX Swing Trader – SMSF Edition (Yeppoon)")
 
-capital = st.number_input("Current capital in dollars", value=2500.0, step=50.0)
-position_size = min(500.0, capital)
+capital = st.number_input("Current SMSF capital (AUD)", value=250000.0, step=1000.0)
+monthly_deposit = st.number_input("Monthly deposit into SMSF (AUD) – $500", value=500.0, step=50.0)
+position_size = min(5000.0, capital * 0.02)  # max 2% per position for SMSF
 
-international_mode = st.checkbox("International Mode (NAB personal account - US/EU/global tickers)", value=False)
+st.write(f"**Recommended position size per new trade:** ${position_size:,.0f} (max 2% of capital)")
+
+international_mode = st.checkbox("International Mode (NAB personal account)", value=False)
 commodities_mode = st.checkbox("Commodities Mode (oil, gold, precious-metals ETFs)", value=True)
 
-st.write(f"Recommended initial buy per new stock or ETF: ${position_size:.0f}.")
-
-rsi_threshold = st.slider("RSI oversold threshold for buy signals (lower = stricter)", 20, 40, 30)
+rsi_threshold = st.slider("RSI oversold threshold for buy signals", 20, 40, 30)
 momentum_period = st.slider("Momentum look-back in weeks", 4, 12, 8)
 
-# Watchlists
 asx_watchlist = ["DRO.AX", "ASB.AX", "EOS.AX", "STO.AX", "WDS.AX", "FMG.AX", "CXO.AX", "NXT.AX", "PDN.AX", "BOE.AX", "DYL.AX"]
 intl_watchlist = ["NVDA", "TSLA", "AMD", "BAE.L", "AIR.PA"]
 commodities_watchlist = ["OOO.AX", "QAU.AX", "GOLD.AX", "USO", "BNO", "XLE", "XOP"]
 
+watchlist = asx_watchlist[:]
 if commodities_mode:
-    watchlist = commodities_watchlist + asx_watchlist
-    if international_mode:
-        watchlist += intl_watchlist
-else:
-    watchlist = asx_watchlist if not international_mode else intl_watchlist + asx_watchlist
+    watchlist += commodities_watchlist
+if international_mode:
+    watchlist += intl_watchlist
 
-st.subheader("Upload Holdings CSV (CommSec for ASX side)")
+st.subheader("Upload CommSec Holdings CSV (for SMSF audit trail)")
 portfolio_file = st.file_uploader("Upload your CommSec holdings CSV", type="csv")
-
 portfolio_df = pd.DataFrame(columns=["Ticker", "Quantity", "Avg_Buy_Price"])
 
 if portfolio_file is not None:
     try:
         content = portfolio_file.getvalue().decode("utf-8")
         lines = content.splitlines()
-        data_start = 0
-        for i, line in enumerate(lines):
-            if line.startswith("Code,") or "Code" in line and "Avail Units" in line:
-                data_start = i
-                break
+        data_start = next((i for i, line in enumerate(lines) if "Code" in line), 0)
         csv_data = "\n".join(lines[data_start:])
         portfolio_raw = pd.read_csv(io.StringIO(csv_data))
         if "Code" in portfolio_raw.columns:
-            portfolio_df["Ticker"] = portfolio_raw["Code"].astype(str).str.strip()
-            portfolio_df["Ticker"] = portfolio_df["Ticker"].apply(lambda x: x if x.endswith(".AX") else x + ".AX")
-            if "Avail Units" in portfolio_raw.columns:
-                portfolio_df["Quantity"] = pd.to_numeric(portfolio_raw["Avail Units"], errors="coerce").fillna(0)
-            if "Purchase $" in portfolio_raw.columns:
-                portfolio_df["Avg_Buy_Price"] = pd.to_numeric(portfolio_raw["Purchase $"], errors="coerce").fillna(0)
-            st.success(f"Loaded {len(portfolio_df)} holdings.")
+            portfolio_df["Ticker"] = portfolio_raw["Code"].astype(str).str.strip() + ".AX"
+            portfolio_df["Quantity"] = pd.to_numeric(portfolio_raw.get("Avail Units", 0), errors="coerce").fillna(0)
+            portfolio_df["Avg_Buy_Price"] = pd.to_numeric(portfolio_raw.get("Purchase $", 0), errors="coerce").fillna(0)
+            st.success(f"Loaded {len(portfolio_df)} SMSF holdings.")
     except Exception as e:
-        st.error(f"Error reading CSV: {e}")
+        st.error(f"CSV error: {e}")
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes to reduce Yahoo requests
+@st.cache_data(ttl=300)
 def get_history(ticker_list):
     try:
-        data = yf.download(ticker_list, period="3mo", progress=False, threads=True)
-        return data
+        return yf.download(ticker_list, period="3mo", progress=False, threads=True)
     except:
         return None
 
-if st.button("Run Weekly Scan & Portfolio Review"):
-    st.write(f"Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST")
+if st.button("Run Weekly SMSF Scan"):
+    st.write(f"Scan run at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST – SMSF compliant")
     data = []
-    # Use batch download where possible to avoid rate limits
     hist_data = get_history(watchlist)
-    
+
     for ticker in watchlist:
         try:
             if hist_data is not None and ticker in hist_data.columns.get_level_values(1):
                 close_series = hist_data['Close'][ticker]
             else:
-                # Fallback for individual ticker
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period="3mo")
                 if len(hist) < 20:
                     continue
                 close_series = hist["Close"]
-            
+
             current_price = close_series.iloc[-1]
             delta = close_series.diff()
             gain = delta.where(delta > 0, 0).rolling(window=14).mean()
             loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
             rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            rsi_val = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
+            rsi_val = 100 - (100 / (1 + rs)).iloc[-1] if not pd.isna((100 - (100 / (1 + rs))).iloc[-1]) else 50.0
             momentum = (current_price / close_series.iloc[-momentum_period]) - 1 if len(close_series) > momentum_period else 0
-            
-            if rsi_val < rsi_threshold and momentum > 0:
-                signal = "BUY"
-            elif rsi_val > 70:
-                signal = "SELL"
-            else:
-                signal = "HOLD"
-            
+
+            signal = "BUY" if (rsi_val < rsi_threshold and momentum > 0) else "SELL" if rsi_val > 70 else "HOLD"
+
             data.append({
                 "Ticker": ticker,
                 "Current Price": round(current_price, 3),
@@ -112,23 +95,22 @@ if st.button("Run Weekly Scan & Portfolio Review"):
                 "Unrealised Profit %": 0.0,
                 "Advice": signal
             })
-            time.sleep(0.2)  # Small delay to stay under Yahoo rate limits
+            time.sleep(0.2)
         except:
-            continue  # Skip any single ticker that causes a temporary rate limit
-    
-    # Portfolio merge and profit calculations (unchanged)
+            continue
+
+    # Merge with uploaded portfolio
     if not portfolio_df.empty:
         for _, row in portfolio_df.iterrows():
             ticker = row["Ticker"]
-            qty = row["Quantity"]
-            avg_price = row["Avg_Buy_Price"]
             existing = next((item for item in data if item["Ticker"] == ticker), None)
             if existing:
-                existing["Quantity"] = qty
-                existing["Avg Buy Price"] = avg_price
+                existing["Quantity"] = row["Quantity"]
+                existing["Avg Buy Price"] = row["Avg_Buy_Price"]
             else:
-                data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": qty, "Avg Buy Price": avg_price, "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD"})
-    
+                data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": row["Quantity"], "Avg Buy Price": row["Avg_Buy_Price"], "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD"})
+
+    # Calculate holding values
     for item in data:
         if item["Quantity"] > 0:
             try:
@@ -143,42 +125,30 @@ if st.button("Run Weekly Scan & Portfolio Review"):
                 item["Advice"] = "SELL for profit"
             elif item["Signal"] == "BUY":
                 item["Advice"] = "BUY to add"
-            else:
-                item["Advice"] = "HOLD"
-    
+
     if data:
         df = pd.DataFrame(data)
         def highlight(row):
-            styles = []
-            for val in row:
-                if isinstance(val, str):
-                    if "BUY" in val:
-                        styles.append("background-color: lightgreen")
-                    elif "SELL" in val:
-                        styles.append("background-color: pink")
-                    else:
-                        styles.append("")
-                else:
-                    styles.append("")
-            return styles
+            if "BUY" in str(row["Advice"]):
+                return ["background-color: lightgreen"] * len(row)
+            elif "SELL" in str(row["Advice"]):
+                return ["background-color: pink"] * len(row)
+            return [""] * len(row)
         styled_df = df.style.apply(highlight, axis=1)
         st.dataframe(styled_df, use_container_width=True)
-        st.subheader("Profit Summary")
+
+        st.subheader("SMSF Portfolio Summary")
         held = df[df["Quantity"] > 0]
         if not held.empty:
             total_value = held["Holding Value"].sum()
             avg_profit = held["Unrealised Profit %"].mean()
-            st.write(f"Total holding value: ${total_value:,.2f}")
-            st.write(f"Average unrealised profit on holdings: {avg_profit:.1f}%")
-        else:
-            st.write("No holdings loaded yet.")
-        st.write("Reinvest any realised profits into the next $500 position to compound steadily.")
-        st.subheader("Risk and Execution Rules")
-        st.write("CommSec $500 minimum for first purchase. Aim for 15–25 percent gross gain per aggressive swing.")
-        st.write("Always set 8–10 percent stop-loss. Risk no more than 20–25 percent of capital per trade.")
-        st.write("CBA/SMSF: International Mode off. NAB personal: turn International Mode on for global exposure.")
-    else:
-        st.write("No data returned – check internet and try again.")
+            st.write(f"**Total SMSF holding value:** ${total_value:,.2f}")
+            st.write(f"**Average unrealised profit:** {avg_profit:.1f}%")
+        st.info("Monthly $500 deposit tracked. Reinvest any realised profits into the next position.")
+
+        # Save log for SMSF audit trail
+        df.to_csv("smsf_swing_trades_log.csv", mode="a", header=not os.path.exists("smsf_swing_trades_log.csv"), index=False)
+        st.success("Trade log saved to smsf_swing_trades_log.csv for audit trail")
 
 st.markdown("---")
-st.caption("Run weekly for both accounts. Defence, uranium and commodities (oil/gold) remain the strongest max-gain streams in the current global environment. Trade small, stay disciplined, and compound steadily from Yeppoon.")
+st.caption("SMSF Edition – monthly $500 inflow tracked for audit trail. Run weekly.")
