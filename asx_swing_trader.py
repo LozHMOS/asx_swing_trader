@@ -8,13 +8,13 @@ import os
 
 st.set_page_config(page_title="Swing Trader – Yeppoon Edition", layout="wide")
 st.title("Swing Trader – Yeppoon Edition")
-st.markdown("**Single App – SMSF + Personal (NabTrade)** – $1,500/month total ($750 each). Grok managing for maximum return.")
+st.markdown("**Single App** – SMSF ($750/month) + NabTrade Personal ($750/month). Total $1,500/month. Grok managing for maximum return.")
 
-st.sidebar.header("Monthly Capital")
+st.sidebar.header("Monthly Capital Inflow")
 smsf_capital = st.sidebar.number_input("SMSF Capital (AUD)", value=250000.0, step=1000.0)
 nab_capital = st.sidebar.number_input("NabTrade Capital (AUD)", value=50000.0, step=1000.0)
-smsf_monthly = st.sidebar.number_input("Monthly deposit SMSF (AUD)", value=750.0, step=50.0)
-nab_monthly = st.sidebar.number_input("Monthly deposit NabTrade (AUD)", value=750.0, step=50.0)
+smsf_monthly = st.sidebar.number_input("Monthly SMSF deposit (AUD)", value=750.0, step=50.0)
+nab_monthly = st.sidebar.number_input("Monthly NabTrade deposit (AUD)", value=750.0, step=50.0)
 
 if st.sidebar.button("Record Monthly Deposits"):
     st.sidebar.success("Recorded $750 into each account – balances updated")
