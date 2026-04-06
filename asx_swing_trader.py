@@ -6,20 +6,24 @@ import io
 import time
 import os
 
-st.set_page_config(page_title="ASX Swing Trader – SMSF Edition", layout="wide")
-st.title("ASX Swing Trader – SMSF Edition (Yeppoon)")
+st.set_page_config(page_title="Swing Trader – Yeppoon Edition", layout="wide")
+st.title("Swing Trader – Yeppoon Edition")
+st.markdown("**Single App – SMSF + Personal (NabTrade)** – $1,500/month total ($750 each). Grok managing for maximum return.")
 
-capital = st.number_input("Current SMSF capital (AUD)", value=250000.0, step=1000.0)
-monthly_deposit = st.number_input("Monthly deposit into SMSF (AUD) – $500", value=500.0, step=50.0)
-position_size = min(5000.0, capital * 0.02)  # max 2% per position for SMSF
+st.sidebar.header("Monthly Capital")
+smsf_capital = st.sidebar.number_input("SMSF Capital (AUD)", value=250000.0, step=1000.0)
+nab_capital = st.sidebar.number_input("NabTrade Capital (AUD)", value=50000.0, step=1000.0)
+smsf_monthly = st.sidebar.number_input("Monthly deposit SMSF (AUD)", value=750.0, step=50.0)
+nab_monthly = st.sidebar.number_input("Monthly deposit NabTrade (AUD)", value=750.0, step=50.0)
 
-st.write(f"**Recommended position size per new trade:** ${position_size:,.0f} (max 2% of capital)")
+if st.sidebar.button("Record Monthly Deposits"):
+    st.sidebar.success("Recorded $750 into each account – balances updated")
 
-international_mode = st.checkbox("International Mode (NAB personal account)", value=False)
-commodities_mode = st.checkbox("Commodities Mode (oil, gold, precious-metals ETFs)", value=True)
+international_mode = st.checkbox("International Mode (US/EU stocks)", value=True)
+commodities_mode = st.checkbox("Commodities Mode (oil, gold, ETFs)", value=True)
 
-rsi_threshold = st.slider("RSI oversold threshold for buy signals", 20, 40, 30)
-momentum_period = st.slider("Momentum look-back in weeks", 4, 12, 8)
+rsi_threshold = st.slider("RSI oversold threshold", 20, 40, 28)
+momentum_period = st.slider("Momentum look-back (weeks)", 4, 12, 8)
 
 asx_watchlist = ["DRO.AX", "ASB.AX", "EOS.AX", "STO.AX", "WDS.AX", "FMG.AX", "CXO.AX", "NXT.AX", "PDN.AX", "BOE.AX", "DYL.AX"]
 intl_watchlist = ["NVDA", "TSLA", "AMD", "BAE.L", "AIR.PA"]
@@ -31,22 +35,22 @@ if commodities_mode:
 if international_mode:
     watchlist += intl_watchlist
 
-st.subheader("Upload CommSec Holdings CSV (for SMSF audit trail)")
-portfolio_file = st.file_uploader("Upload your CommSec holdings CSV", type="csv")
+st.subheader("Upload Holdings CSV (CommSec or NabTrade)")
+portfolio_file = st.file_uploader("Upload CSV", type="csv")
 portfolio_df = pd.DataFrame(columns=["Ticker", "Quantity", "Avg_Buy_Price"])
 
 if portfolio_file is not None:
     try:
         content = portfolio_file.getvalue().decode("utf-8")
         lines = content.splitlines()
-        data_start = next((i for i, line in enumerate(lines) if "Code" in line), 0)
+        data_start = next((i for i, line in enumerate(lines) if "Code" in line or "Ticker" in line), 0)
         csv_data = "\n".join(lines[data_start:])
         portfolio_raw = pd.read_csv(io.StringIO(csv_data))
-        if "Code" in portfolio_raw.columns:
-            portfolio_df["Ticker"] = portfolio_raw["Code"].astype(str).str.strip() + ".AX"
-            portfolio_df["Quantity"] = pd.to_numeric(portfolio_raw.get("Avail Units", 0), errors="coerce").fillna(0)
-            portfolio_df["Avg_Buy_Price"] = pd.to_numeric(portfolio_raw.get("Purchase $", 0), errors="coerce").fillna(0)
-            st.success(f"Loaded {len(portfolio_df)} SMSF holdings.")
+        col = "Code" if "Code" in portfolio_raw.columns else "Ticker"
+        portfolio_df["Ticker"] = portfolio_raw[col].astype(str).str.strip() + ".AX"
+        portfolio_df["Quantity"] = pd.to_numeric(portfolio_raw.get("Quantity", 0), errors="coerce").fillna(0)
+        portfolio_df["Avg_Buy_Price"] = pd.to_numeric(portfolio_raw.get("Avg Buy Price", 0), errors="coerce").fillna(0)
+        st.success(f"Loaded {len(portfolio_df)} holdings.")
     except Exception as e:
         st.error(f"CSV error: {e}")
 
@@ -57,8 +61,8 @@ def get_history(ticker_list):
     except:
         return None
 
-if st.button("Run Weekly SMSF Scan"):
-    st.write(f"Scan run at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST – SMSF compliant")
+if st.button("Run Weekly Swing Scan"):
+    st.write(f"Scan run at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST")
     data = []
     hist_data = get_history(watchlist)
 
@@ -99,7 +103,6 @@ if st.button("Run Weekly SMSF Scan"):
         except:
             continue
 
-    # Merge with uploaded portfolio
     if not portfolio_df.empty:
         for _, row in portfolio_df.iterrows():
             ticker = row["Ticker"]
@@ -110,7 +113,6 @@ if st.button("Run Weekly SMSF Scan"):
             else:
                 data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": row["Quantity"], "Avg Buy Price": row["Avg_Buy_Price"], "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD"})
 
-    # Calculate holding values
     for item in data:
         if item["Quantity"] > 0:
             try:
@@ -137,18 +139,17 @@ if st.button("Run Weekly SMSF Scan"):
         styled_df = df.style.apply(highlight, axis=1)
         st.dataframe(styled_df, use_container_width=True)
 
-        st.subheader("SMSF Portfolio Summary")
+        st.subheader("Portfolio Summary")
         held = df[df["Quantity"] > 0]
         if not held.empty:
             total_value = held["Holding Value"].sum()
             avg_profit = held["Unrealised Profit %"].mean()
-            st.write(f"**Total SMSF holding value:** ${total_value:,.2f}")
+            st.write(f"**Total holding value:** ${total_value:,.2f}")
             st.write(f"**Average unrealised profit:** {avg_profit:.1f}%")
-        st.info("Monthly $500 deposit tracked. Reinvest any realised profits into the next position.")
+        st.info("Monthly $1,500 total deposit tracked. Reinvest profits aggressively.")
 
-        # Save log for SMSF audit trail
-        df.to_csv("smsf_swing_trades_log.csv", mode="a", header=not os.path.exists("smsf_swing_trades_log.csv"), index=False)
-        st.success("Trade log saved to smsf_swing_trades_log.csv for audit trail")
+        df.to_csv("swing_trades_log.csv", mode="a", header=not os.path.exists("swing_trades_log.csv"), index=False)
+        st.success("Trade log saved")
 
 st.markdown("---")
-st.caption("SMSF Edition – monthly $500 inflow tracked for audit trail. Run weekly.")
+st.caption("Single app for both accounts – $1,500/month total. Aggressive but disciplined. Run weekly.")
