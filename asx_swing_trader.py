@@ -8,7 +8,7 @@ import time
 # --- CONFIG ---
 st.set_page_config(page_title="Yeppoon Strategic Command", layout="wide", page_icon="🌊")
 
-# --- MISSING HELPERS ADDED BACK ---
+# --- HELPERS ---
 @st.cache_data(ttl=86400)
 def get_sector_and_alternatives(ticker):
     alts = {
@@ -60,7 +60,7 @@ core_thesis = {
     "JHX.AX": "James Hardie. Wide moat. US housing repair pipeline."
 }
 
-# --- TABS FOR ORGANISATION ---
+# --- TABS ---
 tab1, tab2, tab3 = st.tabs(["📊 Portfolio & Scan", "📜 Ledger", "🛠️ Risk Tools"])
 
 with tab2:
@@ -76,11 +76,9 @@ with tab2:
             row = pd.DataFrame([{'Date': datetime.now().strftime("%Y-%m-%d"), 'Ticker': t, 'Type': ty, 'Units': q, 'Price': p, 'Total': q*p, 'Strategy': 'Core' if t in core_thesis else 'Swing', 'Sector': sec}])
             st.session_state.trade_ledger = pd.concat([st.session_state.trade_ledger, row], ignore_index=True)
             st.success(f"Logged {ty} {t}")
-    
     st.dataframe(st.session_state.trade_ledger, use_container_width=True)
 
 with tab1:
-    # Portfolio Metrics (Realized P/L from Ledger)
     if not st.session_state.trade_ledger.empty:
         df_l = st.session_state.trade_ledger
         realized = df_l[df_l['Type'] == 'SELL']['Total'].sum() - df_l[df_l['Type'] == 'BUY']['Total'].sum()
@@ -101,7 +99,8 @@ with tab1:
                 delta = hist["Close"].diff()
                 gain = delta.where(delta > 0, 0).rolling(14).mean()
                 loss = -delta.where(delta < 0, 0).rolling(14).mean()
-                rsi = 100 - (100 / (1 + (gain / loss)))
+                rs = gain / loss
+                rsi = 100 - (100 / (1 + rs))
                 rsi_val = rsi.iloc[-1]
                 momentum = (curr_p / hist["Close"].iloc[-momentum_period]) - 1
                 
@@ -112,16 +111,23 @@ with tab1:
                     "Momentum %": round(momentum * 100, 1), "Signal": signal,
                     "Thesis": core_thesis.get(ticker, "Swing Play")
                 })
-                progress.progress((i + 1) / len(watchlist))
-                time.sleep(0.05)
             except: continue
+            progress.progress((i + 1) / len(watchlist))
+            time.sleep(0.05)
 
         if data:
             scan_df = pd.DataFrame(data)
             st.subheader("Scan Results")
-            st.dataframe(scan_df.style.applymap(lambda x: 'background-color: #90ee90' if x == 'BUY' else ('background-color: #ffcccb' if x == 'SELL' else ''), subset=['Signal']), use_container_width=True)
             
-            # Heatmap Visual
+            # Compatible styling for Pandas 2.0+
+            def highlight_signal(val):
+                if val == 'BUY': return 'background-color: #90ee90; color: black'
+                if val == 'SELL': return 'background-color: #ffcccb; color: black'
+                return ''
+
+            styled_df = scan_df.style.applymap(highlight_signal, subset=['Signal'])
+            st.dataframe(styled_df, use_container_width=True)
+            
             fig = px.treemap(scan_df, path=['Signal', 'Ticker'], values='RSI', color='RSI', color_continuous_scale='RdYlGn_r')
             st.plotly_chart(fig, use_container_width=True)
 
@@ -131,5 +137,5 @@ with tab3:
     stop = st.number_input("Stop Loss", value=0.9)
     if entry > stop:
         risk_amt = capital * 0.02
-        units = int(risk_amt / (entry - stop))
+        units = int(risk_amt / abs(entry - stop))
         st.success(f"To risk 2% (${risk_amt:,.0f}), buy **{units} units**.")
