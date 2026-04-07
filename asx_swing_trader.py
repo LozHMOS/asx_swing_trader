@@ -1,167 +1,164 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
+import plotly.express as px
 from datetime import datetime
-import io
-import time
 
-st.set_page_config(page_title="Yeppoon Swing Trader", layout="wide")
+st.set_page_config(page_title="Yeppoon Strategic Command", layout="wide", page_icon="🌊")
 
-st.title("🌊 ASX & International Swing Trader – Yeppoon Edition")
-st.markdown("CBA/SMSF: International Mode **off**. NAB personal: International Mode **on**. Commodities Mode adds oil/gold ETFs. Core buy-and-hold names added for the long-term DRO-style strategy. Not financial advice.")
+# --- SESSION INIT ---
+if 'trade_ledger' not in st.session_state:
+    st.session_state.trade_ledger = pd.DataFrame(
+        columns=['Date', 'Ticker', 'Type', 'Units', 'Price', 'Total', 'Strategy', 'Sector']
+    )
 
-# Sidebar parameters
-with st.sidebar:
-    st.header("Trading Parameters")
-    capital = st.number_input("Current Capital ($)", value=2500.0, step=50.0)
-    position_size = st.slider("Target Position Size ($)", 500, 2000, 500)
-    rsi_threshold = st.slider("RSI Oversold Threshold", 20, 40, 30)
-    momentum_period = st.slider("Momentum Look-back (weeks)", 4, 12, 8)
-
-international_mode = st.checkbox("International Mode (NAB personal account)", value=False)
-commodities_mode = st.checkbox("Commodities Mode (oil/gold ETFs)", value=True)
-
-st.write(f"Recommended initial buy: **${position_size}** per new stock or ETF.")
-
-# Watchlists + 5 core buy-and-hold names
-asx_watchlist = ["DRO.AX", "ASB.AX", "EOS.AX", "STO.AX", "WDS.AX", "FMG.AX", "CXO.AX", "NXT.AX", "PDN.AX", "BOE.AX", "DYL.AX", "SDR.AX", "JHX.AX"]
-intl_watchlist = ["NVDA", "TSLA", "AMD", "BAE.L", "AIR.PA"]
-commodities_watchlist = ["OOO.AX", "QAU.AX", "GOLD.AX", "USO", "BNO", "XLE", "XOP"]
-
-if commodities_mode:
-    watchlist = commodities_watchlist + asx_watchlist
-    if international_mode:
-        watchlist += intl_watchlist
-else:
-    watchlist = asx_watchlist if not international_mode else intl_watchlist + asx_watchlist
-
-# Core buy-and-hold thesis notes (Morningstar-style fundamentals + volatility fit)
-core_thesis = {
-    "PDN.AX": "Uranium producer with Langer Heinrich ramping. ~40% discount to FV. AI power demand + supply shortage = structural tailwind.",
-    "DRO.AX": "Counter-drone leader with European manufacturing scale-up. Your original winner. High volatility, multi-year runway.",
-    "QAU.AX": "Currency-hedged gold ETF. Safe-haven play amid wars, inflation, and uncertainty. Clean commodities exposure.",
-    "SDR.AX": "Hotel software platform. ~70% discount to FV. Strong ARR growth + AI efficiency tailwind.",
-    "JHX.AX": "James Hardie – wide moat building materials. ~33% discount to FV. US housing repair pipeline + Azek synergies."
-}
-
-st.subheader("Upload CommSec Holdings CSV")
-portfolio_file = st.file_uploader("Upload your CommSec CSV", type="csv")
-
-portfolio_df = pd.DataFrame(columns=["Ticker", "Quantity", "Avg_Buy_Price"])
-
-if portfolio_file is not None:
+# --- HELPERS ---
+@st.cache_data(ttl=300)
+def get_market_data(ticker):
     try:
-        content = portfolio_file.getvalue().decode("utf-8")
-        lines = content.splitlines()
-        data_start = next((i for i, line in enumerate(lines) if line.startswith("Code,") or "Code" in line), 0)
-        csv_data = "\n".join(lines[data_start:])
-        portfolio_raw = pd.read_csv(io.StringIO(csv_data))
-        if "Code" in portfolio_raw.columns:
-            portfolio_df["Ticker"] = portfolio_raw["Code"].astype(str).str.strip()
-            portfolio_df["Ticker"] = portfolio_df["Ticker"].apply(lambda x: x if x.endswith(".AX") else x + ".AX")
-            portfolio_df["Quantity"] = pd.to_numeric(portfolio_raw.get("Avail Units", 0), errors="coerce").fillna(0)
-            portfolio_df["Avg_Buy_Price"] = pd.to_numeric(portfolio_raw.get("Purchase $", 0), errors="coerce").fillna(0)
-            st.success(f"Loaded {len(portfolio_df)} holdings.")
-    except Exception as e:
-        st.error(f"Error reading CSV: {e}")
+        hist = yf.Ticker(ticker).history(period="5d")
+        if hist.empty:
+            return 0, 0
+        price = hist['Close'].iloc[-1]
+        atr = (hist['High'] - hist['Low']).mean()
+        return round(price, 3), round(atr, 3)
+    except:
+        return 0, 0
 
-if st.button("🚀 Run Weekly Scan & Portfolio Review"):
-    st.write(f"Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST")
-    data = []
-    for ticker in watchlist:
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period="3mo")
-            if len(hist) < 20:
-                continue
-            current_price = hist["Close"].iloc[-1]
-            delta = hist["Close"].diff()
-            gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-            loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            rsi_val = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
-            momentum = (current_price / hist["Close"].iloc[-momentum_period]) - 1 if len(hist) > momentum_period else 0
+@st.cache_data(ttl=86400)
+def get_sector_and_alternatives(ticker):
+    alts_map = {
+        "ENERGY": ["WDS.AX", "STO.AX"],
+        "FINANCIAL SERVICES": ["CBA.AX", "NAB.AX"],
+        "TECHNOLOGY": ["XRO.AX", "WTC.AX"],
+        "BASIC MATERIALS": ["BHP.AX", "RIO.AX"]
+    }
+    try:
+        sec = yf.Ticker(ticker).info.get('sector', 'Other').upper()
+        return sec, alts_map.get(sec, ["Sector ETF"])
+    except:
+        return "OTHER", []
 
-            signal = "BUY" if rsi_val < rsi_threshold and momentum > 0 else "SELL" if rsi_val > 70 else "HOLD"
+# --- CORE ENGINE ---
+def calculate_portfolio(df):
+    positions = {}
+    realized_pnl = 0
 
-            thesis = core_thesis.get(ticker, "Swing only")
-            data.append({
-                "Ticker": ticker,
-                "Current Price": round(current_price, 3),
-                "RSI": round(rsi_val, 1),
-                "Momentum %": round(momentum * 100, 1),
-                "Signal": signal,
-                "Quantity": 0,
-                "Avg Buy Price": 0.0,
-                "Holding Value": 0.0,
-                "Unrealised Profit %": 0.0,
-                "Advice": signal,
-                "Core Thesis": thesis
+    for _, row in df.iterrows():
+        t, q, p = row['Ticker'], row['Units'], row['Price']
+
+        if t not in positions:
+            positions[t] = {'units': 0, 'avg': 0}
+
+        pos = positions[t]
+
+        if row['Type'] == 'BUY':
+            total_units = pos['units'] + q
+            if total_units > 0:
+                pos['avg'] = ((pos['units'] * pos['avg']) + (q * p)) / total_units
+            pos['units'] = total_units
+
+        elif row['Type'] == 'SELL' and pos['units'] > 0:
+            sell_qty = min(q, pos['units'])
+            realized_pnl += sell_qty * (p - pos['avg'])
+            pos['units'] -= sell_qty
+
+    holdings = []
+    for t, data in positions.items():
+        if data['units'] > 0:
+            price, atr = get_market_data(t)
+            unreal = (price - data['avg']) * data['units']
+            sec, alts = get_sector_and_alternatives(t)
+
+            holdings.append({
+                "Ticker": t,
+                "Units": data['units'],
+                "Avg Cost": round(data['avg'], 3),
+                "Price": price,
+                "Unrealized": round(unreal, 2),
+                "Sector": sec,
+                "ATR": atr,
+                "Alts": alts
             })
-            time.sleep(0.15)
-        except:
-            continue
 
-    # Portfolio merge and profit calculations (unchanged)
-    if not portfolio_df.empty:
-        for _, row in portfolio_df.iterrows():
-            ticker = row["Ticker"]
-            qty = row["Quantity"]
-            avg_price = row["Avg_Buy_Price"]
-            existing = next((item for item in data if item["Ticker"] == ticker), None)
-            if existing:
-                existing["Quantity"] = qty
-                existing["Avg Buy Price"] = avg_price
-            else:
-                data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": qty, "Avg Buy Price": avg_price, "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD", "Core Thesis": core_thesis.get(ticker, "Swing only")})
+    return realized_pnl, pd.DataFrame(holdings)
 
-    for item in data:
-        if item["Quantity"] > 0:
-            try:
-                price = yf.Ticker(item["Ticker"]).history(period="1d")["Close"].iloc[-1]
-                item["Current Price"] = round(price, 3)
-            except:
-                pass
-            item["Holding Value"] = round(item["Quantity"] * item["Current Price"], 2)
-            if item["Avg Buy Price"] > 0:
-                item["Unrealised Profit %"] = round(((item["Current Price"] - item["Avg Buy Price"]) / item["Avg Buy Price"]) * 100, 1)
-            if item["Signal"] == "SELL" or item["Unrealised Profit %"] > 15:
-                item["Advice"] = "SELL for profit"
-            elif item["Signal"] == "BUY":
-                item["Advice"] = "BUY to add"
-            else:
-                item["Advice"] = "HOLD"
+# --- STRATEGY ENGINE ---
+def generate_plan(holdings, capital):
+    recs = []
 
-    if data:
-        df = pd.DataFrame(data)
-        def highlight(row):
-            styles = []
-            for val in row:
-                if isinstance(val, str):
-                    if "BUY" in val:
-                        styles.append("background-color: lightgreen")
-                    elif "SELL" in val:
-                        styles.append("background-color: pink")
-                    else:
-                        styles.append("")
-                else:
-                    styles.append("")
-            return styles
-        styled_df = df.style.apply(highlight, axis=1)
-        st.dataframe(styled_df, use_container_width=True)
+    for _, row in holdings.iterrows():
+        if row['ATR'] > 0 and row['Price'] < (row['Avg Cost'] - 2 * row['ATR']):
+            recs.append({"Action": "🚨 EXIT", "Ticker": row['Ticker'], "Reason": "Volatility breakdown"})
 
-        st.subheader("Profit Summary")
-        held = df[df["Quantity"] > 0]
-        if not held.empty:
-            st.write(f"Total holding value: **${held['Holding Value'].sum():,.2f}**")
-            st.write(f"Average unrealised profit: **{held['Unrealised Profit %'].mean():.1f}%**")
-        else:
-            st.write("No holdings loaded yet.")
+        elif row['Unrealized'] < -(capital * 0.02):
+            recs.append({"Action": "✂️ HARVEST", "Ticker": row['Ticker'], "Reason": "Tax loss", "Alt": ", ".join(row['Alts'])})
 
-        st.subheader("Risk and Execution Rules")
-        st.write("Swing parcels: 15–25 percent gross gain target. Always set 8–10 percent stop-loss.")
-        st.write("Core buy-and-hold names: reviewed weekly for long-term potential (DRO-style).")
+    sector_perf = holdings.groupby('Sector')['Unrealized'].sum()
 
-st.markdown("---")
-st.caption("Run weekly for both swing parcels and core names. Defence, uranium and commodities remain the strongest max-gain streams. Trade small, stay disciplined, and compound steadily from Yeppoon.")
+    for sec, perf in sector_perf.items():
+        if perf > 0:
+            pick = holdings[holdings['Sector'] == sec].sort_values(by='Unrealized', ascending=False).iloc[0]
+            recs.append({"Action": "📈 ADD", "Ticker": pick['Ticker'], "Reason": "Sector strength"})
+
+    return pd.DataFrame(recs)
+
+# --- UI ---
+st.title("🌊 Yeppoon Strategic Command")
+
+tab1, tab2, tab3 = st.tabs(["📊 Portfolio", "📜 Ledger", "🎯 Risk"])
+
+# --- ENTRY ---
+with tab2:
+    with st.form("trade"):
+        t = st.text_input("Ticker", "DRO.AX").upper()
+        ty = st.selectbox("Type", ["BUY","SELL"])
+        q = st.number_input("Units", 1)
+        p = st.number_input("Price", 0.001)
+
+        if st.form_submit_button("Log"):
+            sec, _ = get_sector_and_alternatives(t)
+            row = pd.DataFrame([{
+                'Date': datetime.now().strftime("%Y-%m-%d"),
+                'Ticker': t,
+                'Type': ty,
+                'Units': q,
+                'Price': p,
+                'Total': q*p,
+                'Sector': sec
+            }])
+            st.session_state.trade_ledger = pd.concat([st.session_state.trade_ledger, row], ignore_index=True)
+
+# --- PORTFOLIO ---
+with tab1:
+    cap = st.sidebar.number_input("Capital", 10000)
+
+    pnl, holdings = calculate_portfolio(st.session_state.trade_ledger)
+
+    st.metric("Realized P/L", f"${pnl:,.2f}")
+    st.metric("Tax Shield", f"${abs(min(pnl,0))*0.325:,.2f}")
+
+    if not holdings.empty:
+        st.dataframe(holdings)
+
+        fig = px.treemap(holdings, path=['Sector','Ticker'], values='Unrealized',
+                         color='Unrealized', color_continuous_scale='RdYlGn')
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Equity curve
+        df = st.session_state.trade_ledger.copy()
+        df['Signed'] = df.apply(lambda x: x['Total'] if x['Type']=='SELL' else -x['Total'], axis=1)
+        df['Cum'] = df['Signed'].cumsum()
+        st.plotly_chart(px.line(df, x='Date', y='Cum', title="Equity Curve"), use_container_width=True)
+
+        if st.button("🔁 Rebalance"):
+            st.dataframe(generate_plan(holdings, cap))
+
+# --- RISK ---
+with tab3:
+    entry = st.number_input("Entry", 1.0)
+    stop = st.number_input("Stop", 0.9)
+
+    if entry > stop:
+        units = int((cap * 0.02) / (entry - stop))
+        st.success(f"Trade size: {units} units")
