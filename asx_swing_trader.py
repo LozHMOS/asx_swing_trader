@@ -8,9 +8,9 @@ import time
 st.set_page_config(page_title="Yeppoon Swing Trader", layout="wide")
 
 st.title("🌊 ASX & International Swing Trader – Yeppoon Edition")
-st.markdown("CBA/SMSF: International Mode **off**. NAB personal: International Mode **on**. Commodities Mode adds oil/gold ETFs for the extra boost you wanted. Not financial advice.")
+st.markdown("CBA/SMSF: International Mode **off**. NAB personal: International Mode **on**. Commodities Mode adds oil/gold ETFs. Core buy-and-hold names added for the long-term DRO-style strategy. Not financial advice.")
 
-# Sidebar for clean parameters
+# Sidebar parameters
 with st.sidebar:
     st.header("Trading Parameters")
     capital = st.number_input("Current Capital ($)", value=2500.0, step=50.0)
@@ -23,8 +23,8 @@ commodities_mode = st.checkbox("Commodities Mode (oil/gold ETFs)", value=True)
 
 st.write(f"Recommended initial buy: **${position_size}** per new stock or ETF.")
 
-# Watchlists
-asx_watchlist = ["DRO.AX", "ASB.AX", "EOS.AX", "STO.AX", "WDS.AX", "FMG.AX", "CXO.AX", "NXT.AX", "PDN.AX", "BOE.AX", "DYL.AX"]
+# Watchlists + 5 core buy-and-hold names
+asx_watchlist = ["DRO.AX", "ASB.AX", "EOS.AX", "STO.AX", "WDS.AX", "FMG.AX", "CXO.AX", "NXT.AX", "PDN.AX", "BOE.AX", "DYL.AX", "SDR.AX", "JHX.AX"]
 intl_watchlist = ["NVDA", "TSLA", "AMD", "BAE.L", "AIR.PA"]
 commodities_watchlist = ["OOO.AX", "QAU.AX", "GOLD.AX", "USO", "BNO", "XLE", "XOP"]
 
@@ -35,7 +35,15 @@ if commodities_mode:
 else:
     watchlist = asx_watchlist if not international_mode else intl_watchlist + asx_watchlist
 
-# Portfolio upload – flexible for CommSec
+# Core buy-and-hold thesis notes (Morningstar-style fundamentals + volatility fit)
+core_thesis = {
+    "PDN.AX": "Uranium producer with Langer Heinrich ramping. ~40% discount to FV. AI power demand + supply shortage = structural tailwind.",
+    "DRO.AX": "Counter-drone leader with European manufacturing scale-up. Your original winner. High volatility, multi-year runway.",
+    "QAU.AX": "Currency-hedged gold ETF. Safe-haven play amid wars, inflation, and uncertainty. Clean commodities exposure.",
+    "SDR.AX": "Hotel software platform. ~70% discount to FV. Strong ARR growth + AI efficiency tailwind.",
+    "JHX.AX": "James Hardie – wide moat building materials. ~33% discount to FV. US housing repair pipeline + Azek synergies."
+}
+
 st.subheader("Upload CommSec Holdings CSV")
 portfolio_file = st.file_uploader("Upload your CommSec CSV", type="csv")
 
@@ -77,6 +85,7 @@ if st.button("🚀 Run Weekly Scan & Portfolio Review"):
 
             signal = "BUY" if rsi_val < rsi_threshold and momentum > 0 else "SELL" if rsi_val > 70 else "HOLD"
 
+            thesis = core_thesis.get(ticker, "Swing only")
             data.append({
                 "Ticker": ticker,
                 "Current Price": round(current_price, 3),
@@ -87,13 +96,14 @@ if st.button("🚀 Run Weekly Scan & Portfolio Review"):
                 "Avg Buy Price": 0.0,
                 "Holding Value": 0.0,
                 "Unrealised Profit %": 0.0,
-                "Advice": signal
+                "Advice": signal,
+                "Core Thesis": thesis
             })
-            time.sleep(0.15)  # Prevent rate-limit on cloud
+            time.sleep(0.15)
         except:
             continue
 
-    # Portfolio merge and profit calculations
+    # Portfolio merge and profit calculations (unchanged)
     if not portfolio_df.empty:
         for _, row in portfolio_df.iterrows():
             ticker = row["Ticker"]
@@ -104,7 +114,7 @@ if st.button("🚀 Run Weekly Scan & Portfolio Review"):
                 existing["Quantity"] = qty
                 existing["Avg Buy Price"] = avg_price
             else:
-                data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": qty, "Avg Buy Price": avg_price, "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD"})
+                data.append({"Ticker": ticker, "Current Price": 0.0, "RSI": 0.0, "Momentum %": 0.0, "Signal": "HOLD", "Quantity": qty, "Avg Buy Price": avg_price, "Holding Value": 0.0, "Unrealised Profit %": 0.0, "Advice": "HOLD", "Core Thesis": core_thesis.get(ticker, "Swing only")})
 
     for item in data:
         if item["Quantity"] > 0:
@@ -150,8 +160,8 @@ if st.button("🚀 Run Weekly Scan & Portfolio Review"):
             st.write("No holdings loaded yet.")
 
         st.subheader("Risk and Execution Rules")
-        st.write("Aim for 15–25 percent gross gain per swing. Always set 8–10 percent stop-loss.")
-        st.write("CBA/SMSF: International Mode off. NAB: International Mode on.")
+        st.write("Swing parcels: 15–25 percent gross gain target. Always set 8–10 percent stop-loss.")
+        st.write("Core buy-and-hold names: reviewed weekly for long-term potential (DRO-style).")
 
 st.markdown("---")
-st.caption("Run weekly for both accounts. Defence, uranium and commodities remain the strongest max-gain streams. Trade small, stay disciplined, and compound steadily from Yeppoon.")
+st.caption("Run weekly for both swing parcels and core names. Defence, uranium and commodities remain the strongest max-gain streams. Trade small, stay disciplined, and compound steadily from Yeppoon.")
