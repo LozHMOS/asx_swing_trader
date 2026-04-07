@@ -76,7 +76,20 @@ with tab2:
             row = pd.DataFrame([{'Date': datetime.now().strftime("%Y-%m-%d"), 'Ticker': t, 'Type': ty, 'Units': q, 'Price': p, 'Total': q*p, 'Strategy': 'Core' if t in core_thesis else 'Swing', 'Sector': sec}])
             st.session_state.trade_ledger = pd.concat([st.session_state.trade_ledger, row], ignore_index=True)
             st.success(f"Logged {ty} {t}")
+    
+    st.divider()
+    st.subheader("Trade History")
     st.dataframe(st.session_state.trade_ledger, use_container_width=True)
+    
+    # DOWNLOAD BUTTON FOR PERSISTENCE
+    if not st.session_state.trade_ledger.empty:
+        csv = st.session_state.trade_ledger.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Ledger (CSV)",
+            data=csv,
+            file_name=f"yeppoon_ledger_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime='text/csv'
+        )
 
 with tab1:
     if not st.session_state.trade_ledger.empty:
@@ -99,8 +112,7 @@ with tab1:
                 delta = hist["Close"].diff()
                 gain = delta.where(delta > 0, 0).rolling(14).mean()
                 loss = -delta.where(delta < 0, 0).rolling(14).mean()
-                rs = gain / loss
-                rsi = 100 - (100 / (1 + rs))
+                rsi = 100 - (100 / (1 + (gain / loss)))
                 rsi_val = rsi.iloc[-1]
                 momentum = (curr_p / hist["Close"].iloc[-momentum_period]) - 1
                 
@@ -119,13 +131,17 @@ with tab1:
             scan_df = pd.DataFrame(data)
             st.subheader("Scan Results")
             
-            # Compatible styling for Pandas 2.0+
             def highlight_signal(val):
                 if val == 'BUY': return 'background-color: #90ee90; color: black'
                 if val == 'SELL': return 'background-color: #ffcccb; color: black'
                 return ''
 
-            styled_df = scan_df.style.applymap(highlight_signal, subset=['Signal'])
+            # Updated for Pandas 2.1.0+ Compatibility
+            if hasattr(scan_df.style, 'map'):
+                styled_df = scan_df.style.map(highlight_signal, subset=['Signal'])
+            else:
+                styled_df = scan_df.style.applymap(highlight_signal, subset=['Signal'])
+                
             st.dataframe(styled_df, use_container_width=True)
             
             fig = px.treemap(scan_df, path=['Signal', 'Ticker'], values='RSI', color='RSI', color_continuous_scale='RdYlGn_r')
