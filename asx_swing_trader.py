@@ -1,157 +1,328 @@
+# =============================================================================
+# YEPPOON STRATEGIC COMMAND — Streamlit App v2.0
+# Hybrid Swing + Buy-and-Hold Trading System | Rulebook v2.0 | April 2026
+# =============================================================================
+# DEPLOYMENT: Streamlit Community Cloud via GitHub
+# DEPENDENCIES: See requirements.txt
+# DEBUG: Toggle "Debug Mode" in the sidebar to expose raw data & logs
+# =============================================================================
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.express as px
-from datetime import datetime
-import time
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import traceback
 
-# --- CONFIG ---
-st.set_page_config(page_title="Yeppoon Strategic Command", layout="wide", page_icon="🌊")
+# =============================================================================
+# PAGE CONFIGURATION — must be the first Streamlit call
+# =============================================================================
+st.set_page_config(
+    page_title="Yeppoon Strategic Command",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# --- HELPERS ---
-@st.cache_data(ttl=86400)
-def get_sector_and_alternatives(ticker):
-    alts = {
-        "ENERGY": ["WDS.AX", "STO.AX"],
-        "FINANCIAL SERVICES": ["CBA.AX", "NAB.AX"],
-        "TECHNOLOGY": ["XRO.AX", "WTC.AX"],
-        "BASIC MATERIALS": ["BHP.AX", "RIO.AX"],
-        "URANIUM": ["PDN.AX", "BOE.AX", "DYL.AX"]
-    }
-    try:
-        t_info = yf.Ticker(ticker).info
-        sec = t_info.get('sector', 'Other').upper()
-        return sec, alts.get(sec, ["Sector ETF"])
-    except:
-        return "Other", []
+# =============================================================================
+# CONSTANTS & WATCHLISTS (Rulebook Section 8)
+# =============================================================================
 
-# --- SESSION INIT ---
-if 'trade_ledger' not in st.session_state:
-    st.session_state.trade_ledger = pd.DataFrame(columns=['Date','Ticker','Type','Units','Price','Total','Strategy','Sector'])
-
-# --- UI HEADER ---
-st.title("🌊 Yeppoon Strategic Command")
-st.caption("Hybrid Swing + Core Buy-and-Hold | CBA/SMSF & NAB Personal")
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("Trading Parameters")
-    capital = st.number_input("Current Capital ($)", value=10000.0, step=50.0)
-    rsi_threshold = st.slider("RSI Oversold Threshold", 20, 40, 30)
-    momentum_period = st.slider("Momentum Look-back (weeks)", 4, 12, 8)
-    st.divider()
-    intl_mode = st.checkbox("International Mode (NAB personal)", value=False)
-    comm_mode = st.checkbox("Commodities Mode", value=True)
-
-# --- WATCHLIST LOGIC ---
-asx_watchlist = ["DRO.AX", "ASB.AX", "EOS.AX", "STO.AX", "WDS.AX", "FMG.AX", "CXO.AX", "NXT.AX", "PDN.AX", "BOE.AX", "DYL.AX", "SDR.AX", "JHX.AX"]
-intl_watchlist = ["NVDA", "TSLA", "AMD", "BAE.L", "AIR.PA"]
-comm_watchlist = ["OOO.AX", "QAU.AX", "GOLD.AX", "USO", "XLE"]
-
-watchlist = asx_watchlist
-if intl_mode: watchlist += intl_watchlist
-if comm_mode: watchlist += comm_watchlist
-
-core_thesis = {
-    "PDN.AX": "Uranium producer. AI power demand + supply shortage.",
-    "DRO.AX": "Counter-drone leader. Your original winner. High volatility.",
-    "QAU.AX": "Currency-hedged gold. Safe-haven play.",
-    "SDR.AX": "Hotel software. 70% discount to FV. ARR growth.",
-    "JHX.AX": "James Hardie. Wide moat. US housing repair pipeline."
+CORE_PORTFOLIO = {
+    "PDN.AX": {
+        "name": "Paladin Energy",
+        "thesis": "Uranium producer. AI data-centre power demand driving nuclear renaissance. Supply shortage structural.",
+        "catalyst": "Production ramp at Langer Heinrich. Offtake agreements.",
+        "stop_type": "50MA",
+    },
+    "DRO.AX": {
+        "name": "DroneShield",
+        "thesis": "Counter-drone technology leader. NATO/Five Eyes procurement accelerating.",
+        "catalyst": "New government contracts. NATO framework deals.",
+        "stop_type": "trailing25",
+    },
+    "QAU.AX": {
+        "name": "Betashares Gold (AUD Hedged)",
+        "thesis": "Currency-hedged gold. Safe-haven demand. AUD/USD hedge removes FX drag.",
+        "catalyst": "Gold price momentum. Geopolitical risk premium.",
+        "stop_type": "50MA",
+    },
+    "SDR.AX": {
+        "name": "SiteMinder",
+        "thesis": "Hotel software platform. ~70% discount to Morningstar fair value. ARR compounding.",
+        "catalyst": "ARR acceleration. Profitability inflection. Analyst upgrades.",
+        "stop_type": "50MA",
+    },
+    "JHX.AX": {
+        "name": "James Hardie Industries",
+        "thesis": "Wide-moat building materials. Dominant US fibre cement. Housing repair pipeline.",
+        "catalyst": "US housing cycle recovery. Margin expansion.",
+        "stop_type": "trailing25",
+    },
 }
 
-# --- TABS ---
-tab1, tab2, tab3 = st.tabs(["📊 Portfolio & Scan", "📜 Ledger", "🛠️ Risk Tools"])
+ASX_WATCHLIST = [
+    "DRO.AX","ASB.AX","EOS.AX","STO.AX","WDS.AX",
+    "FMG.AX","CXO.AX","NXT.AX","PDN.AX","BOE.AX",
+    "DYL.AX","SDR.AX","JHX.AX",
+]
+INTL_WATCHLIST  = ["NVDA","TSLA","AMD","BAE.L","AIR.PA"]
+COMMODITY_WATCHLIST = ["OOO.AX","QAU.AX","GOLD.AX","USO","XLE"]
 
-with tab2:
-    st.subheader("Manual Trade Entry")
-    with st.form("trade"):
-        c1, c2, c3, c4 = st.columns(4)
-        t = c1.text_input("Ticker", "EOS.AX").upper()
-        ty = c2.selectbox("Type", ["BUY", "SELL"])
-        q = c3.number_input("Units", 1)
-        p = c4.number_input("Price", 0.001)
-        if st.form_submit_button("Log Trade"):
-            sec, _ = get_sector_and_alternatives(t)
-            row = pd.DataFrame([{'Date': datetime.now().strftime("%Y-%m-%d"), 'Ticker': t, 'Type': ty, 'Units': q, 'Price': p, 'Total': q*p, 'Strategy': 'Core' if t in core_thesis else 'Swing', 'Sector': sec}])
-            st.session_state.trade_ledger = pd.concat([st.session_state.trade_ledger, row], ignore_index=True)
-            st.success(f"Logged {ty} {t}")
-    
-    st.divider()
-    st.subheader("Trade History")
-    st.dataframe(st.session_state.trade_ledger, use_container_width=True)
-    
-    # DOWNLOAD BUTTON FOR PERSISTENCE
-    if not st.session_state.trade_ledger.empty:
-        csv = st.session_state.trade_ledger.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Ledger (CSV)",
-            data=csv,
-            file_name=f"yeppoon_ledger_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime='text/csv'
-        )
+REGIME_TICKERS = {"ASX 200":"^AXJO","S&P 500":"^GSPC","VIX":"^VIX"}
 
-with tab1:
-    if not st.session_state.trade_ledger.empty:
-        df_l = st.session_state.trade_ledger
-        realized = df_l[df_l['Type'] == 'SELL']['Total'].sum() - df_l[df_l['Type'] == 'BUY']['Total'].sum()
-        st.metric("Realized P/L (Ledger Cash)", f"${realized:,.2f}")
+LEDGER_COLUMNS = [
+    "Date","Ticker","Strategy_Type","Direction","Quantity",
+    "Price","Total_Value","Brokerage","Stop_Level",
+    "Profit_Loss_Dollar","Profit_Loss_Pct","Rationale","Rule_Reference",
+]
 
-    if st.button("🚀 Run Weekly Scan"):
-        st.write(f"Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M')} AEST")
-        data = []
-        progress = st.progress(0)
-        
-        for i, ticker in enumerate(watchlist):
-            try:
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period="3mo")
-                if len(hist) < 20: continue
-                
-                curr_p = hist["Close"].iloc[-1]
-                delta = hist["Close"].diff()
-                gain = delta.where(delta > 0, 0).rolling(14).mean()
-                loss = -delta.where(delta < 0, 0).rolling(14).mean()
-                rsi = 100 - (100 / (1 + (gain / loss)))
-                rsi_val = rsi.iloc[-1]
-                momentum = (curr_p / hist["Close"].iloc[-momentum_period]) - 1
-                
-                signal = "BUY" if rsi_val < rsi_threshold and momentum > 0 else "SELL" if rsi_val > 70 else "HOLD"
-                
-                data.append({
-                    "Ticker": ticker, "Price": round(curr_p, 3), "RSI": round(rsi_val, 1),
-                    "Momentum %": round(momentum * 100, 1), "Signal": signal,
-                    "Thesis": core_thesis.get(ticker, "Swing Play")
-                })
-            except: continue
-            progress.progress((i + 1) / len(watchlist))
-            time.sleep(0.05)
+# =============================================================================
+# SESSION STATE INITIALISATION
+# =============================================================================
 
-        if data:
-            scan_df = pd.DataFrame(data)
-            st.subheader("Scan Results")
-            
-            def highlight_signal(val):
-                if val == 'BUY': return 'background-color: #90ee90; color: black'
-                if val == 'SELL': return 'background-color: #ffcccb; color: black'
-                return ''
+def init_session_state():
+    defaults = {
+        "debug_log": [],
+        "trade_ledger": pd.DataFrame(columns=LEDGER_COLUMNS),
+        "core_entries": {
+            t: {"entry_price":0.0,"peak_price":0.0,"quantity":0}
+            for t in CORE_PORTFOLIO
+        },
+        "last_scan_results": None,
+        "regime_result": None,
+        "core_results": None,
+    }
+    for key, val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
 
-            # Updated for Pandas 2.1.0+ Compatibility
-            if hasattr(scan_df.style, 'map'):
-                styled_df = scan_df.style.map(highlight_signal, subset=['Signal'])
-            else:
-                styled_df = scan_df.style.applymap(highlight_signal, subset=['Signal'])
-                
-            st.dataframe(styled_df, use_container_width=True)
-            
-            fig = px.treemap(scan_df, path=['Signal', 'Ticker'], values='RSI', color='RSI', color_continuous_scale='RdYlGn_r')
-            st.plotly_chart(fig, use_container_width=True)
+init_session_state()
 
-with tab3:
-    st.subheader("Position Sizing")
-    entry = st.number_input("Entry Price", value=1.0)
-    stop = st.number_input("Stop Loss", value=0.9)
-    if entry > stop:
-        risk_amt = capital * 0.02
-        units = int(risk_amt / abs(entry - stop))
-        st.success(f"To risk 2% (${risk_amt:,.0f}), buy **{units} units**.")
+# =============================================================================
+# DEBUG LOGGING
+# =============================================================================
+
+def dlog(message: str, level: str = "INFO"):
+    """Append entry to in-session debug log."""
+    st.session_state.debug_log.append({
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "level": level,
+        "message": str(message),
+    })
+
+# =============================================================================
+# DATA FETCHING — cached (production) and uncached (debug bypass)
+# =============================================================================
+
+def _fetch_raw(ticker: str, period: str = "1y"):
+    """
+    Core yfinance fetch. NOT cached — called directly by the debug panel.
+    Returns (DataFrame | None, error_str | None).
+    """
+    try:
+        t = yf.Ticker(ticker)
+        df = t.history(period=period, auto_adjust=True)
+        if df is None or df.empty:
+            return None, f"No data returned for {ticker}"
+        required = ["Open","High","Low","Close","Volume"]
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            return None, f"Missing columns {missing} for {ticker}"
+        # Strip timezone — prevents AEST vs EST comparison errors
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        df = df.dropna(subset=["Close"])
+        if len(df) < 15:
+            return None, f"Insufficient data for {ticker}: only {len(df)} rows (need ≥15)"
+        return df, None
+    except Exception as e:
+        return None, f"yfinance exception for {ticker}: {type(e).__name__}: {e}"
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_ticker_data(ticker: str, period: str = "1y"):
+    """Cached wrapper. TTL=15 min. Use _fetch_raw() in debug panel to bypass."""
+    return _fetch_raw(ticker, period)
+
+# =============================================================================
+# TECHNICAL INDICATOR CALCULATIONS
+# =============================================================================
+
+def calc_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """RSI using Wilder's smoothing (EWM alpha=1/period)."""
+    if len(close) < period + 1:
+        return pd.Series(np.nan, index=close.index)
+    delta   = close.diff()
+    gain    = delta.clip(lower=0)
+    loss    = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+def calc_macd(close: pd.Series, fast=12, slow=26, signal=9):
+    """Returns (macd_line, signal_line, histogram)."""
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
+    macd = ema_fast - ema_slow
+    sig  = macd.ewm(span=signal, adjust=False).mean()
+    return macd, sig, macd - sig
+
+
+def calculate_indicators(df: pd.DataFrame) -> dict:
+    """
+    Derive all required indicators from an OHLCV DataFrame.
+    Returns a flat dict of latest-bar values. Never raises — errors captured.
+    """
+    out = {
+        "price":None,"prev_price":None,"price_change_pct":None,
+        "ma_20":None,"ma_50":None,"ma_200":None,
+        "above_50ma":None,"above_200ma":None,"days_below_50ma":0,
+        "rsi":None,"rsi_prev":None,"rsi_turning":False,
+        "macd_hist":None,"macd_hist_prev":None,"macd_inflecting":False,
+        "volume":None,"volume_ma20":None,"volume_ratio":None,
+        "high_52w":None,"low_52w":None,"peak_price":None,
+        "errors":[],
+    }
+    try:
+        close  = df["Close"]
+        volume = df["Volume"]
+        n = len(close)
+
+        out["price"] = float(close.iloc[-1])
+        if n >= 2:
+            out["prev_price"] = float(close.iloc[-2])
+            out["price_change_pct"] = (out["price"]-out["prev_price"])/out["prev_price"]*100
+
+        if n >= 20:  out["ma_20"]  = float(close.rolling(20).mean().iloc[-1])
+        if n >= 50:
+            out["ma_50"]      = float(close.rolling(50).mean().iloc[-1])
+            out["above_50ma"] = out["price"] > out["ma_50"]
+        if n >= 200:
+            out["ma_200"]      = float(close.rolling(200).mean().iloc[-1])
+            out["above_200ma"] = out["price"] > out["ma_200"]
+
+        # Consecutive closes below 50MA (Rule 6.1 — need 2 to trigger)
+        if out["ma_50"] is not None:
+            ma50s = close.rolling(50).mean()
+            count = 0
+            for i in range(1, min(6, n+1)):
+                if close.iloc[-i] < ma50s.iloc[-i]: count += 1
+                else: break
+            out["days_below_50ma"] = count
+
+        # RSI
+        rsi_s = calc_rsi(close)
+        if not rsi_s.dropna().empty:
+            out["rsi"] = float(rsi_s.iloc[-1])
+            if n >= 2: out["rsi_prev"] = float(rsi_s.iloc[-2])
+
+        # RSI momentum turning up
+        if out["rsi"] and out["rsi_prev"]:
+            out["rsi_turning"] = (out["rsi"] > out["rsi_prev"]) and (out["rsi"] < 45)
+
+        # MACD histogram
+        _,_,hist = calc_macd(close)
+        if not hist.dropna().empty:
+            out["macd_hist"] = float(hist.iloc[-1])
+            if n >= 2: out["macd_hist_prev"] = float(hist.iloc[-2])
+
+        # MACD inflecting positive from negative (momentum confirmation)
+        if out["macd_hist"] and out["macd_hist_prev"]:
+            out["macd_inflecting"] = (
+                out["macd_hist"] > out["macd_hist_prev"] and out["macd_hist"] < 0
+            )
+
+        # Volume
+        out["volume"] = float(volume.iloc[-1])
+        if n >= 20:
+            vol_ma = float(volume.rolling(20).mean().iloc[-1])
+            out["volume_ma20"] = vol_ma
+            if vol_ma > 0: out["volume_ratio"] = out["volume"]/vol_ma
+
+        # 52-week range and all-time peak
+        w = min(252, n)
+        out["high_52w"]   = float(close.rolling(w).max().iloc[-1])
+        out["low_52w"]    = float(close.rolling(w).min().iloc[-1])
+        out["peak_price"] = float(close.max())
+
+    except Exception as e:
+        out["errors"].append(f"Indicator error: {type(e).__name__}: {e}")
+    return out
+
+# =============================================================================
+# MARKET REGIME (Rulebook Section 2)
+# =============================================================================
+
+def get_market_regime(debug: bool = False) -> dict:
+    """
+    Determine RISK-ON / RISK-CAUTION / RISK-OFF / UNKNOWN.
+    Section 2 logic: ASX 200 vs 200MA, S&P 500 vs 200MA, VIX > 25 override.
+    """
+    result = {
+        "regime":"UNKNOWN","parcel_size":500,"stop_pct":0.07,
+        "signals":{},"errors":[],"raw_data":{},
+    }
+    for name, ticker in REGIME_TICKERS.items():
+        df, err = fetch_ticker_data(ticker, "1y")
+        if err:
+            result["errors"].append(f"{name} ({ticker}): {err}")
+            dlog(f"Regime fetch error — {name}: {err}","ERROR")
+            continue
+        if debug: result["raw_data"][ticker] = df
+        ind = calculate_indicators(df)
+        if name == "VIX":
+            result["signals"]["VIX"] = {
+                "value": ind["price"],
+                "above_25": ind["price"] is not None and ind["price"] > 25,
+            }
+        else:
+            result["signals"][name] = {
+                "price":ind["price"],"ma_200":ind["ma_200"],
+                "above_200ma":ind["above_200ma"],"indicator_errors":ind["errors"],
+            }
+
+    asx_above = result["signals"].get("ASX 200",{}).get("above_200ma")
+    sp_above  = result["signals"].get("S&P 500",{}).get("above_200ma")
+    vix_high  = result["signals"].get("VIX",{}).get("above_25",False)
+
+    if asx_above is None or sp_above is None:
+        result.update({"regime":"UNKNOWN","parcel_size":500,"stop_pct":0.07})
+    elif vix_high or (not asx_above and not sp_above):
+        result.update({"regime":"RISK-OFF","parcel_size":0,"stop_pct":0.05})
+    elif not asx_above or not sp_above:
+        result.update({"regime":"RISK-CAUTION","parcel_size":500,"stop_pct":0.06})
+    else:
+        result.update({"regime":"RISK-ON","parcel_size":1000,"stop_pct":0.09})
+
+    dlog(f"Regime determined: {result['regime']}","INFO")
+    return result
+
+# =============================================================================
+# SWING SCANNER — single ticker (Rulebook Rule 3.2)
+# =============================================================================
+
+def scan_single_ticker(ticker: str, regime: dict, debug: bool = False) -> dict:
+    """Evaluate one ticker against Rule 3.2 entry criteria."""
+    row = {
+        "ticker":ticker,"price":None,"price_change_pct":None,
+        "rsi":None,"rsi_prev":None,"rsi_turning":False,
+        "volume_ratio":None,"macd_inflecting":False,
+        "above_50ma":None,"ma_50":None,
+        "high_52w":None,"low_52w":None,
+        "buy_signal":False,"signal_strength":0,
+        "signal_notes":[],"error":None,
+    }
+    df, err = fetch_ticker_data(ticker, "6mo")
+    if err:
+        row["error"] = err
+        dlog(f"Scan fetch error {ticker}: {err}","WARN")
+        return row
+    try:
+        ind = calculate_indicators(df)
+        row.update({
+            "price":         round(ind["price"],3)          if ind["price"] else None,
+            "price_change_pct": round(ind["
